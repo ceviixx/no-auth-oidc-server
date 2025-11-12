@@ -5,14 +5,58 @@ from authlib.integrations.flask_oauth2 import AuthorizationServer
 from authlib.oauth2.rfc6749 import grants
 from authlib.oidc.core.grants import OpenIDCode
 import os
+import json
 
 
 REDIRECT_URL = os.environ.get('NO_AUTH_REDIRECT_URL', 'http://localhost:3000/auth/oidc.callback')
 OIDC_HOST_NAME = os.environ.get('NO_AUTH_OIDC_HOST', 'http://localhost:4000')
-OIDC_USER_NAME = os.environ.get('NO_AUTH_OIDC_USER_NAME', 'admin')
-OIDC_USER_MAIL = os.environ.get('NO_AUTH_OIDC_USER_MAIL', 'admin@local.net')
 OIDC_CLIENT_ID = os.environ.get('NO_AUTH_OIDC_CLIENT_ID', 'client-id')
 OIDC_CLIENT_SECRET = os.environ.get('NO_AUTH_OIDC_CLIENT_SECRET', 'client-secret')
+
+# Path to users.json file - can be overridden with environment variable
+USERS_JSON_PATH = os.environ.get('USERS_JSON_PATH', '/config/users.json')
+
+# Function to load users from JSON file
+def load_users():
+    """
+    Load users from JSON file. Tries multiple paths:
+    1. Environment variable USERS_JSON_PATH (default: /config/users.json for Docker)
+    2. ./users.json (local development)
+    3. Fallback to default user if no file found
+    """
+    paths_to_try = [
+        USERS_JSON_PATH,
+        os.path.join(os.path.dirname(__file__), 'users.json'),
+        './users.json'
+    ]
+    
+    for path in paths_to_try:
+        try:
+            with open(path, 'r') as f:
+                users_data = json.load(f)
+                print(f"Successfully loaded users from: {path}")
+                return users_data
+        except FileNotFoundError:
+            continue
+        except json.JSONDecodeError as e:
+            print(f"Error parsing JSON from {path}: {e}")
+            continue
+    
+    # Fallback to default user if no file found
+    print("Warning: No users.json file found. Using default user.")
+    return {
+        'user': {
+            'sub': 'user123', 
+            'preferred_username': 'john.doe',
+            'name': 'John Doe', 
+            'email': 'john@example.com',
+            'roles': ['umami-admin', 'app-user'],
+            'realm_access': {
+                'roles': ['umami-admin', 'app-user']
+            },
+            'groups': ['team-developers', 'team-admins', 'project-alpha']
+        }
+    }
 
 
 app = Flask(__name__)
@@ -31,13 +75,9 @@ clients = {
         'scope': 'openid profile email',
     }
 }
-users = {
-    'user': {
-        'sub': 'user', 
-        'name': OIDC_USER_NAME, 
-        'email': OIDC_USER_MAIL
-    }
-}
+
+# Load users from JSON file
+users = load_users()
 
 class DummyClient:
     def __init__(self, client_id, client_secret, redirect_uris, response_types, grant_types, scope):

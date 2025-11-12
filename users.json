@@ -1,0 +1,13 @@
+{
+  "user": {
+    "sub": "user123",
+    "preferred_username": "john.doe",
+    "name": "John Doe",
+    "email": "john@example.com",
+    "roles": ["app-user"],
+    "realm_access": {
+      "roles": ["app-user"]
+    },
+    "groups": ["team-developers", "team-admins", "project-alpha"]
+  }
+}
