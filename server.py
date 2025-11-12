@@ -30,20 +30,27 @@ def load_users():
         './users.json'
     ]
     
+    print(f"=== Loading users.json ===")
+    print(f"USERS_JSON_PATH from env: {USERS_JSON_PATH}")
+    print(f"Paths to try: {paths_to_try}")
+    
     for path in paths_to_try:
+        print(f"Trying to load: {path}")
         try:
             with open(path, 'r') as f:
                 users_data = json.load(f)
-                print(f"Successfully loaded users from: {path}")
+                print(f"✓ Successfully loaded users from: {path}")
+                print(f"User data: {json.dumps(users_data, indent=2)}")
                 return users_data
         except FileNotFoundError:
+            print(f"✗ File not found: {path}")
             continue
         except json.JSONDecodeError as e:
-            print(f"Error parsing JSON from {path}: {e}")
+            print(f"✗ Error parsing JSON from {path}: {e}")
             continue
     
     # Fallback to default user if no file found
-    print("Warning: No users.json file found. Using default user.")
+    print("⚠ Warning: No users.json file found. Using default user.")
     return {
         'user': {
             'sub': 'user123', 
@@ -57,6 +64,7 @@ def load_users():
             'groups': ['team-developers', 'team-admins', 'project-alpha']
         }
     }
+
 
 
 app = Flask(__name__)
@@ -171,15 +179,20 @@ def token():
         return jsonify({'error': 'invalid_grant', 'error_description': 'Invalid code'}), 400
     secret = app.config.get('SECRET_KEY', 'secret-key')
     now = datetime.datetime.utcnow()
+    
+    user_data = users['user']
     payload = {
         'iss': OIDC_HOST_NAME,
-        'sub': users['user']['sub'],
+        'sub': user_data['sub'],
         'aud': request.form.get('client_id', OIDC_CLIENT_ID),
         'exp': now + datetime.timedelta(hours=1),
         'iat': now,
-        'email': users['user']['email'],
-        'name': users['user']['name'],
-        'preferred_username': users['user']['name'],
+        'email': user_data['email'],
+        'name': user_data['name'],
+        'preferred_username': user_data.get('preferred_username', user_data['name']),
+        'roles': user_data.get('roles', []),
+        'realm_access': user_data.get('realm_access', {}),
+        'groups': user_data.get('groups', []),
     }
     id_token = jwt.encode(payload, secret, algorithm='HS256')
     return jsonify({
