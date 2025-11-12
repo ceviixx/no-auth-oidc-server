@@ -16,56 +16,88 @@ OIDC_CLIENT_SECRET = os.environ.get('NO_AUTH_OIDC_CLIENT_SECRET', 'client-secret
 # Path to users.json file - can be overridden with environment variable
 USERS_JSON_PATH = os.environ.get('USERS_JSON_PATH', '/config/users.json')
 
-# Function to load users from JSON file
-def load_users():
+# Cache for the users file path (determined once at startup)
+_users_file_path = None
+
+def find_users_file():
     """
-    Load users from JSON file. Tries multiple paths:
-    1. Environment variable USERS_JSON_PATH (default: /config/users.json for Docker)
-    2. ./users.json (local development)
-    3. Fallback to default user if no file found
+    Find the users.json file on first call and cache the path.
+    Returns the path to the users file or None if not found.
     """
+    global _users_file_path
+    
+    if _users_file_path is not None:
+        return _users_file_path
+    
     paths_to_try = [
-        USERS_JSON_PATH,
-        os.path.join(os.path.dirname(__file__), 'users.json'),
-        './users.json'
+        USERS_JSON_PATH,  # Default: /config/users.json (Docker) or custom path from env
+        os.path.join(os.path.dirname(__file__), 'users.json'),  # Same directory as server.py
     ]
     
-    print(f"=== Loading users.json ===")
+    print(f"=== Searching for users.json ===")
     print(f"USERS_JSON_PATH from env: {USERS_JSON_PATH}")
-    print(f"Paths to try: {paths_to_try}")
     
     for path in paths_to_try:
-        print(f"Trying to load: {path}")
-        try:
-            with open(path, 'r') as f:
-                users_data = json.load(f)
-                print(f"✓ Successfully loaded users from: {path}")
-                print(f"User data: {json.dumps(users_data, indent=2)}")
-                return users_data
-        except FileNotFoundError:
-            print(f"✗ File not found: {path}")
-            continue
-        except json.JSONDecodeError as e:
-            print(f"✗ Error parsing JSON from {path}: {e}")
-            continue
+        if os.path.exists(path):
+            print(f"✓ Found users.json at: {path}")
+            _users_file_path = path
+            return path
+        else:
+            print(f"✗ Not found: {path}")
     
-    # Fallback to default user if no file found
-    print("⚠ Warning: No users.json file found. Using default user.")
-    return {
-        'user': {
-            'sub': 'user123', 
-            'preferred_username': 'john.doe',
-            'name': 'John Doe', 
-            'email': 'john@example.com',
-            'roles': ['umami-admin', 'app-user'],
-            'realm_access': {
-                'roles': ['umami-admin', 'app-user']
-            },
-            'groups': ['team-developers', 'team-admins', 'project-alpha']
+    print("⚠ Warning: No users.json file found.")
+    return None
+
+def load_users():
+    """
+    Load users from JSON file. Called on every request to get fresh data.
+    Returns user data dict or default user if file not found.
+    """
+    file_path = find_users_file()
+    
+    if file_path is None:
+        # Return default user if no file found
+        return {
+            'user': {
+                'sub': 'user123', 
+                'preferred_username': 'john.doe',
+                'name': 'John Doe', 
+                'email': 'john@example.com',
+                'roles': ['umami-admin', 'app-user'],
+                'realm_access': {
+                    'roles': ['umami-admin', 'app-user']
+                },
+                'groups': ['team-developers', 'team-admins', 'project-alpha']
+            }
         }
-    }
+    
+    try:
+        with open(file_path, 'r') as f:
+            users_data = json.load(f)
+            return users_data
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"⚠ Error loading users.json: {e}. Using default user.")
+        return {
+            'user': {
+                'sub': 'user123', 
+                'preferred_username': 'john.doe',
+                'name': 'John Doe', 
+                'email': 'john@example.com',
+                'roles': ['umami-admin', 'app-user'],
+                'realm_access': {
+                    'roles': ['umami-admin', 'app-user']
+                },
+                'groups': ['team-developers', 'team-admins', 'project-alpha']
+            }
+        }
 
-
+def get_user():
+    """
+    Helper function to get current user data.
+    Reloads the users.json file on every call to ensure fresh data.
+    """
+    users = load_users()
+    return users.get('user', {})
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret-key'
@@ -84,8 +116,8 @@ clients = {
     }
 }
 
-# Load users from JSON file
-users = load_users()
+# Find users.json file at startup (path is cached)
+find_users_file()
 
 class DummyClient:
     def __init__(self, client_id, client_secret, redirect_uris, response_types, grant_types, scope):
@@ -112,7 +144,7 @@ class DummyClient:
 
 class AuthorizationCodeGrant(OpenIDCode):
     def authenticate_user(self, authorization_code):
-        return users['user']
+        return get_user()
 
 authorization = AuthorizationServer(app)
 authorization.register_grant(AuthorizationCodeGrant)
@@ -180,7 +212,8 @@ def token():
     secret = app.config.get('SECRET_KEY', 'secret-key')
     now = datetime.datetime.utcnow()
     
-    user_data = users['user']
+    # Load fresh user data
+    user_data = get_user()
     payload = {
         'iss': OIDC_HOST_NAME,
         'sub': user_data['sub'],
@@ -204,8 +237,8 @@ def token():
 
 @app.route('/userinfo')
 def userinfo():
-    # Dummy userinfo endpoint
-    return jsonify(users['user'])
+    # Load fresh user data on every request
+    return jsonify(get_user())
 
 @app.route('/jwks')
 def jwks():
